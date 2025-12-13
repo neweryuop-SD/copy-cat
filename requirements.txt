@@ -1,9 +1,2 @@
-# 核心依赖
-psutil==5.9.0
-pywin32==306
-
-# 安全相关
-python-magic-bin==0.4.14
-
-# 可选（用于创建快捷方式）
-winshell==0.6
+psutil>=5.9.0
+pywin32>=306
