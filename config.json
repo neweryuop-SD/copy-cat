@@ -1,0 +1,33 @@
+{
+  "keywords": [
+    ".doc",
+    ".docx",
+    ".pdf",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".jpg",
+    "教",
+    ".png"
+  ],
+  "backup_folder": "USB_Backup",
+  "min_free_space_gb": 5,
+  "max_file_size_mb": 100,
+  "max_total_size_gb": 50,
+  "check_interval": 3,
+  "exclude_folders": [
+    "System Volume Information",
+    "$RECYCLE.BIN",
+    "Windows",
+    "Temp",
+    "Temporary"
+  ],
+  "cleanup_strategy": "oldest_first",
+  "max_backup_age_days": 15,
+  "log_level": "INFO",
+  "enable_autostart": true,
+  "hidden_mode": true,
+  "usb_label_as_folder": true,
+  "backup_by_date": true
+}
