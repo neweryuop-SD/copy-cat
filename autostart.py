@@ -1,95 +1,142 @@
 """
-开机自启动管理模块 - 无需管理员权限
+增强版自启动管理模块
+支持中文界面，提供更多功能
 """
 
 import os
 import sys
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple
+import subprocess
 
-try:
-    import pythoncom
-    from win32com.shell import shell, shellcon
-
-    WINDOWS_COM_AVAILABLE = True
-except ImportError:
-    WINDOWS_COM_AVAILABLE = False
-
-
-class AutoStartManager:
-    """自启动管理器（无需管理员权限）"""
+class EnhancedAutoStartManager:
+    """增强的自启动管理器"""
 
     def __init__(self, app_name: str = "USBBackup"):
         self.app_name = app_name
         self.startup_folder = self._get_startup_folder()
+        self.config_file = Path("autostart_config.json")
+        self._load_config()
+
+    def _load_config(self):
+        """加载配置"""
+        default_config = {
+            "app_name": "USBBackup",
+            "exe_path": "",
+            "args": "",
+            "hidden_mode": True,
+            "created_time": "",
+            "last_modified": ""
+        }
+
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    self.config = json.load(f)
+            except:
+                self.config = default_config
+        else:
+            self.config = default_config
+
+    def _save_config(self):
+        """保存配置"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+            return True
+        except:
+            return False
 
     def _get_startup_folder(self) -> Optional[Path]:
-        """获取当前用户的启动文件夹"""
+        """获取启动文件夹"""
         try:
-            # 方法1: 使用环境变量（最可靠）
+            # 方法1: 使用环境变量
             appdata = os.environ.get('APPDATA', '')
             if appdata:
                 startup_path = Path(appdata) / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Startup'
                 if startup_path.exists():
                     return startup_path
 
-            # 方法2: 尝试使用shell
-            if WINDOWS_COM_AVAILABLE:
-                try:
-                    from win32com.client import Dispatch
-                    shell = Dispatch("WScript.Shell")
-                    startup_path = shell.SpecialFolders("Startup")
-                    return Path(startup_path)
-                except:
-                    pass
+            # 方法2: 使用shell命令
+            try:
+                result = subprocess.run(
+                    ['powershell', '-Command', '([Environment]::GetFolderPath("Startup"))'],
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8'
+                )
+                if result.returncode == 0:
+                    startup_path = Path(result.stdout.strip())
+                    if startup_path.exists():
+                        return startup_path
+            except:
+                pass
 
             # 方法3: 使用已知路径
             user_profile = os.environ.get('USERPROFILE', '')
             if user_profile:
-                startup_path = Path(
-                    user_profile) / 'AppData' / 'Roaming' / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Startup'
+                startup_path = Path(user_profile) / 'AppData' / 'Roaming' / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Startup'
                 if startup_path.exists():
                     return startup_path
 
             return None
 
         except Exception as e:
-            print(f"[ERROR] 获取启动文件夹失败: {e}")
+            print(f"获取启动文件夹失败: {e}")
             return None
 
-    def set_autostart(self, exe_path: str, args: str = "") -> bool:
+    def setup_autostart(self, exe_path: str = "", args: str = "") -> Tuple[bool, str]:
         """设置开机自启动"""
         try:
             if not self.startup_folder:
-                print("[ERROR] 无法找到启动文件夹")
-                return False
+                return False, "无法找到启动文件夹"
+
+            # 如果没有提供exe_path，使用当前程序
+            if not exe_path:
+                if getattr(sys, 'frozen', False):
+                    exe_path = sys.executable
+                else:
+                    exe_path = os.path.abspath(sys.argv[0])
 
             # 确保路径是绝对路径
             exe_path = os.path.abspath(exe_path)
 
-            # 如果是Python脚本，需要指定Python解释器
+            # 创建批处理文件内容
             if exe_path.endswith('.py'):
                 python_exe = sys.executable
-                target = f'"{python_exe}" "{exe_path}"'
-                if args:
-                    target += f" {args}"
+                command = f'"{python_exe}" "{exe_path}"'
             else:
-                target = f'"{exe_path}"'
-                if args:
-                    target += f" {args}"
+                command = f'"{exe_path}"'
 
-            # 创建批处理文件（最简单可靠的方法）
-            return self._create_bat_file(target)
+            if args:
+                command += f' {args}'
 
-        except Exception as e:
-            print(f"[ERROR] 设置自启动失败: {e}")
-            return False
+            # 如果启用隐藏模式，使用start /B
+            if self.config.get("hidden_mode", True):
+                bat_content = f'''@echo off
+REM USB文件备份系统 - 自启动脚本
+REM 创建时间: {self._get_current_time()}
 
-    def _create_bat_file(self, target: str) -> bool:
-        """创建批处理文件到启动文件夹"""
-        try:
-            bat_content = f'@echo off\nstart "" /B {target}\n'
+chcp 65001 >nul
+title USB备份系统
+echo 正在启动USB文件备份系统...
+start "" /B {command}
+exit
+'''
+            else:
+                bat_content = f'''@echo off
+REM USB文件备份系统 - 自启动脚本
+REM 创建时间: {self._get_current_time()}
+
+chcp 65001 >nul
+title USB备份系统
+echo 正在启动USB文件备份系统...
+{command}
+pause
+'''
+
+            # 保存批处理文件
             bat_path = self.startup_folder / f"{self.app_name}.bat"
 
             with open(bat_path, 'w', encoding='utf-8') as f:
@@ -103,141 +150,269 @@ class AutoStartManager:
             except:
                 pass
 
-            print(f"[INFO] 已创建自启动批处理文件: {bat_path}")
-            return True
+            # 更新配置
+            self.config.update({
+                "app_name": self.app_name,
+                "exe_path": exe_path,
+                "args": args,
+                "hidden_mode": self.config.get("hidden_mode", True),
+                "created_time": self._get_current_time(),
+                "last_modified": self._get_current_time(),
+                "bat_path": str(bat_path)
+            })
+            self._save_config()
+
+            return True, f"自启动设置成功: {bat_path}"
 
         except Exception as e:
-            print(f"[ERROR] 创建批处理文件失败: {e}")
-            return False
+            return False, f"设置自启动失败: {e}"
 
-    def _create_shortcut(self, target: str) -> bool:
-        """创建快捷方式（备用方法）"""
-        if not WINDOWS_COM_AVAILABLE:
-            return False
-
-        try:
-            shortcut_path = self.startup_folder / f"{self.app_name}.lnk"
-
-            shortcut = pythoncom.CoCreateInstance(
-                shell.CLSID_ShellLink,
-                None,
-                pythoncom.CLSCTX_INPROC_SERVER,
-                shell.IID_IShellLink
-            )
-
-            # 设置目标路径
-            shortcut.SetPath(sys.executable)
-
-            # 如果是Python脚本，设置参数
-            if target.endswith('.py'):
-                shortcut.SetArguments(f'"{target}"')
-
-            # 设置工作目录
-            shortcut.SetWorkingDirectory(str(Path(target).parent))
-
-            # 设置描述
-            shortcut.SetDescription("USB文件监控备份系统")
-
-            # 保存快捷方式
-            persist_file = shortcut.QueryInterface(pythoncom.IID_IPersistFile)
-            persist_file.Save(str(shortcut_path), 0)
-
-            return True
-
-        except Exception as e:
-            print(f"[ERROR] 创建快捷方式失败: {e}")
-            return False
-
-    def remove_autostart(self) -> bool:
+    def remove_autostart(self) -> Tuple[bool, str, List[str]]:
         """移除开机自启动"""
+        removed_files = []
         try:
             if not self.startup_folder:
-                return False
+                return False, "无法找到启动文件夹", removed_files
 
-            removed = False
+            # 要查找的文件名模式
+            patterns = [
+                f"{self.app_name}.bat",
+                f"{self.app_name}.lnk",
+                "USBBackup.bat",
+                "USBBackup.lnk",
+                "USB_File_Backup.bat",
+                "USB_File_Backup.lnk"
+            ]
 
-            # 删除批处理文件
-            bat_path = self.startup_folder / f"{self.app_name}.bat"
-            if bat_path.exists():
-                bat_path.unlink()
-                removed = True
+            # 查找并删除文件
+            for pattern in patterns:
+                file_path = self.startup_folder / pattern
+                if file_path.exists():
+                    try:
+                        file_path.unlink()
+                        removed_files.append(pattern)
+                        print(f"已删除: {pattern}")
+                    except Exception as e:
+                        print(f"删除失败 {pattern}: {e}")
 
-            # 删除快捷方式
-            shortcut_path = self.startup_folder / f"{self.app_name}.lnk"
-            if shortcut_path.exists():
-                shortcut_path.unlink()
-                removed = True
+            # 删除配置文件
+            if self.config_file.exists():
+                try:
+                    self.config_file.unlink()
+                    removed_files.append("autostart_config.json")
+                except:
+                    pass
 
-            if removed:
-                print("[INFO] 已移除开机自启动")
-
-            return removed
+            if removed_files:
+                return True, f"成功移除 {len(removed_files)} 个自启动文件", removed_files
+            else:
+                return True, "未找到自启动文件", removed_files
 
         except Exception as e:
-            print(f"[ERROR] 移除自启动失败: {e}")
-            return False
+            return False, f"移除自启动失败: {e}", removed_files
 
-    def is_autostart_set(self) -> bool:
-        """检查是否已设置自启动"""
+    def check_autostart(self) -> Tuple[bool, List[str]]:
+        """检查自启动状态"""
+        found_files = []
         try:
             if not self.startup_folder:
-                return False
+                return False, found_files
 
-            bat_path = self.startup_folder / f"{self.app_name}.bat"
-            shortcut_path = self.startup_folder / f"{self.app_name}.lnk"
+            # 查找相关文件
+            for file_path in self.startup_folder.glob("*"):
+                filename = file_path.name.lower()
+                if ("usbbackup" in filename or
+                    "usb_file" in filename or
+                    "usb backup" in filename.lower()):
+                    found_files.append(file_path.name)
 
-            return bat_path.exists() or shortcut_path.exists()
+            return len(found_files) > 0, found_files
 
+        except Exception as e:
+            print(f"检查自启动失败: {e}")
+            return False, found_files
+
+    def open_startup_folder(self) -> bool:
+        """打开启动文件夹"""
+        try:
+            if self.startup_folder:
+                os.startfile(self.startup_folder)
+                return True
+            else:
+                # 尝试用shell命令打开
+                os.system('start shell:startup')
+                return True
         except:
             return False
 
+    def _get_current_time(self) -> str:
+        """获取当前时间字符串"""
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def setup_autostart_manually():
-    """手动设置自启动的说明"""
-    print("\n" + "=" * 60)
-    print("手动设置开机自启动")
-    print("=" * 60)
+    def create_manual_guide(self):
+        """创建手动设置指南"""
+        guide = f"""
+        ========================================
+        USB文件备份系统 - 手动自启动设置指南
+        ========================================
+        
+        启动文件夹位置:
+        {self.startup_folder or "C:\\Users\\[用户名]\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"}
+        
+        手动设置步骤:
+        1. 打开启动文件夹（按 Win+R，输入: shell:startup）
+        2. 创建新的批处理文件（例如: USBBackup.bat）
+        3. 文件内容:
+        
+        @echo off
+        chcp 65001 >nul
+        start "" /B "{sys.executable if getattr(sys, 'frozen', False) else sys.argv[0]}"
+        exit
+        
+        4. 保存文件并设置为隐藏属性
+        
+        手动移除步骤:
+        1. 打开启动文件夹
+        2. 删除所有与USB备份相关的.bat和.lnk文件
+        3. 重启电脑确认
+        
+        ========================================
+        """
+        return guide
 
-    # 获取启动文件夹路径
-    manager = AutoStartManager()
-    if manager.startup_folder:
-        print(f"启动文件夹: {manager.startup_folder}")
-    else:
-        print("启动文件夹: C:\\Users\\[用户名]\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup")
-
-    print("\n手动设置步骤:")
-    print("1. 打开启动文件夹（Win+R，输入: shell:startup）")
-    print("2. 创建新的快捷方式或批处理文件")
-    print("3. 目标指向本程序")
-    print("\n或运行程序时添加 --setup 参数尝试自动设置")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
+def main():
+    """命令行界面"""
     import argparse
 
-    parser = argparse.ArgumentParser(description="开机自启动管理")
+    parser = argparse.ArgumentParser(
+        description="USB文件备份系统 - 自启动管理工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+  python autostart_manager.py --setup
+  python autostart_manager.py --remove
+  python autostart_manager.py --check
+  python autostart_manager.py --open
+        """
+    )
+
     parser.add_argument("--setup", action="store_true", help="设置开机自启动")
     parser.add_argument("--remove", action="store_true", help="移除开机自启动")
     parser.add_argument("--check", action="store_true", help="检查自启动状态")
-    parser.add_argument("--exe", type=str, help="可执行文件路径")
+    parser.add_argument("--open", action="store_true", help="打开启动文件夹")
+    parser.add_argument("--guide", action="store_true", help="显示手动设置指南")
+    parser.add_argument("--exe", type=str, help="指定可执行文件路径")
     parser.add_argument("--args", type=str, default="", help="启动参数")
 
     args = parser.parse_args()
 
-    manager = AutoStartManager()
+    # 设置控制台编码为UTF-8
+    if sys.platform == "win32":
+        os.system("chcp 65001 >nul")
+
+    manager = EnhancedAutoStartManager()
+
+    print("=" * 60)
+    print("USB文件备份系统 - 自启动管理工具")
+    print("=" * 60)
 
     if args.setup:
-        if args.exe:
-            success = manager.set_autostart(args.exe, args.args)
-            print(f"设置结果: {'成功' if success else '失败'}")
+        print("[信息] 正在设置开机自启动...")
+        success, message = manager.setup_autostart(args.exe, args.args)
+        if success:
+            print(f"[成功] {message}")
         else:
-            print("请使用 --exe 参数指定可执行文件路径")
+            print(f"[失败] {message}")
+
     elif args.remove:
-        success = manager.remove_autostart()
-        print(f"移除结果: {'成功' if success else '失败'}")
+        print("[信息] 正在移除开机自启动...")
+        success, message, files = manager.remove_autostart()
+        if success:
+            print(f"[成功] {message}")
+            if files:
+                print("移除的文件:")
+                for f in files:
+                    print(f"  - {f}")
+        else:
+            print(f"[失败] {message}")
+
     elif args.check:
-        is_set = manager.is_autostart_set()
-        print(f"自启动状态: {'已设置' if is_set else '未设置'}")
+        print("[信息] 检查自启动状态...")
+        is_set, files = manager.check_autostart()
+        if is_set:
+            print("[警告] 已设置自启动")
+            print("找到的文件:")
+            for f in files:
+                print(f"  - {f}")
+        else:
+            print("[信息] 未设置自启动")
+
+    elif args.open:
+        print("[信息] 正在打开启动文件夹...")
+        if manager.open_startup_folder():
+            print("[成功] 已打开启动文件夹")
+        else:
+            print("[失败] 无法打开启动文件夹")
+
+    elif args.guide:
+        print(manager.create_manual_guide())
+
     else:
-        setup_autostart_manually()
+        # 交互模式
+        print("\n请选择操作:")
+        print("1. 设置开机自启动")
+        print("2. 移除开机自启动")
+        print("3. 检查自启动状态")
+        print("4. 打开启动文件夹")
+        print("5. 显示手动设置指南")
+        print("6. 退出")
+
+        try:
+            choice = input("\n请输入选项 (1-6): ").strip()
+
+            if choice == "1":
+                exe_path = input("可执行文件路径 (直接回车使用当前程序): ").strip()
+                args_str = input("启动参数 (直接回车跳过): ").strip()
+                success, message = manager.setup_autostart(exe_path if exe_path else None, args_str)
+                print(f"\n{message}")
+
+            elif choice == "2":
+                success, message, files = manager.remove_autostart()
+                print(f"\n{message}")
+
+            elif choice == "3":
+                is_set, files = manager.check_autostart()
+                if is_set:
+                    print("\n[警告] 已设置自启动")
+                    for f in files:
+                        print(f"  - {f}")
+                else:
+                    print("\n[信息] 未设置自启动")
+
+            elif choice == "4":
+                if manager.open_startup_folder():
+                    print("\n[成功] 已打开启动文件夹")
+                else:
+                    print("\n[失败] 无法打开启动文件夹")
+
+            elif choice == "5":
+                print(manager.create_manual_guide())
+
+            elif choice == "6":
+                print("\n再见！")
+                return
+
+            else:
+                print("\n无效选择")
+
+        except KeyboardInterrupt:
+            print("\n\n操作取消")
+        except Exception as e:
+            print(f"\n发生错误: {e}")
+
+    print("\n" + "=" * 60)
+    input("按回车键退出...")
+
+if __name__ == "__main__":
+    main()
