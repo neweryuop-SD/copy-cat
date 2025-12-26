@@ -12,10 +12,10 @@
     ".png"
   ],
   "backup_folder": "USB_Backup",
-  "min_free_space_gb": 5,
-  "max_file_size_mb": 100,
+  "min_free_space_gb": 50,
+  "max_file_size_mb": 500,
   "max_total_size_gb": 50,
-  "check_interval": 3,
+  "check_interval": 60,
   "exclude_folders": [
     "System Volume Information",
     "$RECYCLE.BIN",
